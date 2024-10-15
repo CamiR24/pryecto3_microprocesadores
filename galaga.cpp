@@ -23,8 +23,11 @@ struct Alien {
     int x, y;
     bool active;
     bool reachedTarget = false;  // Indica si alcanzó la altura objetivo
-    bool descendingZigZag = false; // Indica si está descendiendo en zigzag
-    Alien(int startX, int startY) : x(startX), y(startY), active(false) {}
+    bool descending = false;     // Indica si está descendiendo hacia el jugador
+    int targetX;                 // Posición x objetivo (posición del jugador)
+    int descentPhase = 0;        // Fase del descenso: 0-inicial, 1-ajuste X, 2-descenso final
+    int initialDescentSteps = 3; // Pasos iniciales de descenso en Y
+    Alien(int startX, int startY) : x(startX), y(startY), active(false), targetX(startX) {}
 };
 
 struct GameState {
@@ -36,6 +39,7 @@ struct GameState {
     vector<Alien> aliens;
     int aliensEnEscena = 0;  // Control de alienígenas activos en pantalla
     int indiceActual = 0;    // Índice del siguiente grupo de aliens a liberar
+    Alien* alienCurrentlyDescending = nullptr; // Apuntador al alien que está descendiendo
 };
 
 struct GameMode {
@@ -88,14 +92,19 @@ void renderAliens(const vector<Alien>& aliens, const string& alienSprite) {
 }
 
 void render(const GameState& estado, const GameMode& mode) {
-    // Limpia la pantalla al inicio de cada frame
-
-
+    // Mover el cursor a la posición inicial y limpiar la línea
     setCursorPosition(0, 0);
-    cout << "Vidas: " << estado.vidasJugador << " | Puntuacion: " << estado.puntuacion << endl;
+    cout << string(ANCHO_PANTALLA + 2, ' ');  // Limpiar la línea
+    setCursorPosition(0, 0);
+    cout << "Vidas: " << estado.vidasJugador << " | Puntuacion: " << estado.puntuacion;
 
-    cout << '+' << string(ANCHO_PANTALLA, '-') << '+' << endl;
+    // Dibujar el borde superior
+    setCursorPosition(0, 1);
+    cout << '+' << string(ANCHO_PANTALLA, '-') << '+';
+
+    // Renderizar el campo de juego
     for (int i = 0; i < ALTO_PANTALLA; i++) {
+        setCursorPosition(0, i + 2);  // Ajustar posición vertical
         cout << '|';
         for (int j = 0; j < ANCHO_PANTALLA; j++) {
             bool drawn = false;
@@ -122,11 +131,15 @@ void render(const GameState& estado, const GameMode& mode) {
 
             if (!drawn) cout << ' ';
         }
-        cout << '|' << endl;
+        cout << '|';
     }
-    cout << '+' << string(ANCHO_PANTALLA, '-') << '+' << endl;
 
-    renderNaveJugador(estado.playerX, estado.playerY, mode);
+    // Dibujar el borde inferior
+    setCursorPosition(0, ALTO_PANTALLA + 2);
+    cout << '+' << string(ANCHO_PANTALLA, '-') << '+';
+
+    // Renderizar la nave del jugador
+    renderNaveJugador(estado.playerX, estado.playerY + 2, mode);  // Ajustar posición vertical
 }
 
 void liberarSiguienteAlien(GameState& estado, const GameMode& mode) {
@@ -135,56 +148,119 @@ void liberarSiguienteAlien(GameState& estado, const GameMode& mode) {
         Alien& alien = estado.aliens[estado.indiceActual++];
         alien.active = true;          // Activar el alienígena
         alien.reachedTarget = false;  // Asegurarnos de que no ha alcanzado su objetivo aún
+        alien.descending = false;
+        alien.descentPhase = 0;
+        alien.initialDescentSteps = 3; // Número de pasos iniciales en Y
         estado.aliensEnEscena++;
     }
 }
 
 void updateAliens(GameState& estado, const GameMode& mode) {
-    static int zigZagIndex = 0; // Índice del alienígena que comenzará a descender en zigzag
-
-    bool liberarNuevoGrupo = true;
-
-    for (int i = 0; i < estado.aliens.size(); ++i) {
-        Alien& alien = estado.aliens[i];
+    // Actualizar alienígenas
+    for (auto& alien : estado.aliens) {
         if (alien.active) {
-            if (alien.reachedTarget) {
-                if (alien.descendingZigZag) {
-                    // Movimiento en zigzag
-                    int moveDirection = rand() % 3 - 1;
-                    alien.x += moveDirection;
+            if (alien.descending) {
+                if (alien.descentPhase == 0) {
+                    // Fase 0: Descenso inicial en zigzag
+                    int moveDirectionX = rand() % 3 - 1; // -1, 0, 1
+                    alien.x += moveDirectionX;
                     alien.y++;
+                    alien.initialDescentSteps--;
+                    if (alien.initialDescentSteps <= 0) {
+                        alien.descentPhase = 1; // Pasar a la siguiente fase
+                    }
+                } else if (alien.descentPhase == 1) {
+                    // Fase 1: Ajuste en X hacia targetX
+                    if (alien.x < alien.targetX) {
+                        alien.x++;
+                    } else if (alien.x > alien.targetX) {
+                        alien.x--;
+                    }
+                    if (alien.x == alien.targetX) {
+                        alien.descentPhase = 2; // Pasar a la siguiente fase
+                    }
+                } else if (alien.descentPhase == 2) {
+                    // Fase 2: Descenso final en zigzag
+                    int moveDirectionX = rand() % 3 - 1; // -1, 0, 1
+                    alien.x += moveDirectionX;
+                    alien.y++;
+                }
 
-                    if (alien.y >= ALTO_PANTALLA) {
-                        alien.active = false;
-                        estado.aliensEnEscena--;
+                // Asegurar que el alienígena se mantenga dentro de los límites horizontales
+                if (alien.x < 0) alien.x = 0;
+                if (alien.x >= ANCHO_PANTALLA) alien.x = ANCHO_PANTALLA - 1;
+
+                // Verificar colisión con el jugador
+                if (alien.y >= estado.playerY && alien.x == estado.playerX) {
+                    // Alienígena colisiona con el jugador
+                    estado.vidasJugador--;
+                    alien.active = false;
+                    estado.aliensEnEscena--;
+                    estado.alienCurrentlyDescending = nullptr;
+
+                    if (estado.vidasJugador <= 0) {
+                        setCursorPosition(0, ALTO_PANTALLA + 4);
+                        cout << "\n¡Juego Terminado!";
+                        exit(0);
                     }
                 }
-            } else {
+
+                if (alien.y >= ALTO_PANTALLA) {
+                    alien.active = false;
+                    estado.aliensEnEscena--;
+                    // Verificar si este era el alienígena que estaba descendiendo
+                    if (&alien == estado.alienCurrentlyDescending) {
+                        estado.alienCurrentlyDescending = nullptr;
+                    }
+                }
+            } else if (!alien.reachedTarget) {
                 // Movimiento hacia la altura objetivo
                 if (alien.y < ALTURA_OBJETIVO) {
                     alien.y++;
-                    liberarNuevoGrupo = false;
                 } else {
                     alien.reachedTarget = true;
                 }
             }
+            // De lo contrario, el alienígena está esperando en la altura objetivo
         }
     }
 
-    // Iniciar el descenso en zigzag de los alienígenas uno por uno
-    if (estado.aliensEnEscena > 0 && estado.aliens[zigZagIndex].active && estado.aliens[zigZagIndex].reachedTarget && !estado.aliens[zigZagIndex].descendingZigZag) {
-        estado.aliens[zigZagIndex].descendingZigZag = true;
-        zigZagIndex++;
-    }
+    // Si no hay un alienígena descendiendo actualmente, seleccionamos uno al azar
+    if (estado.alienCurrentlyDescending == nullptr) {
+        // Coleccionar alienígenas que pueden comenzar a descender
+        vector<Alien*> readyAliens;
+        for (auto& alien : estado.aliens) {
+            if (alien.active && alien.reachedTarget && !alien.descending) {
+                readyAliens.push_back(&alien);
+            }
+        }
+        if (!readyAliens.empty()) {
+            // Seleccionar uno al azar
+            int index = rand() % readyAliens.size();
+            Alien* selectedAlien = readyAliens[index];
+            selectedAlien->descending = true;
+            selectedAlien->targetX = estado.playerX;  // Registrar posición del jugador
+            selectedAlien->descentPhase = 0;          // Iniciar en fase 0
+            selectedAlien->initialDescentSteps = 3;   // Pasos iniciales en Y
+            estado.alienCurrentlyDescending = selectedAlien;
+        } else {
+            // No hay alienígenas listos para descender
+            // Verificar si podemos liberar el siguiente grupo
+            bool canLiberateNextGroup = true;
 
-    // Si todos los alienígenas actuales han comenzado a descender en zigzag, liberamos el siguiente grupo
-    if (zigZagIndex >= estado.indiceActual && estado.indiceActual < estado.aliens.size()) {
-        liberarNuevoGrupo = true;
-    }
+            // Verificar si hay alienígenas moviéndose hacia la altura objetivo
+            for (auto& alien : estado.aliens) {
+                if (alien.active && !alien.reachedTarget && !alien.descending) {
+                    // Alienígena moviéndose hacia la altura objetivo
+                    canLiberateNextGroup = false;
+                    break;
+                }
+            }
 
-    if (liberarNuevoGrupo && estado.aliensEnEscena == 0) {
-        liberarSiguienteAlien(estado, mode);
-        zigZagIndex = estado.indiceActual - mode.groupSize; // Reiniciamos el índice para el nuevo grupo
+            if (canLiberateNextGroup && estado.indiceActual < estado.aliens.size()) {
+                liberarSiguienteAlien(estado, mode);
+            }
+        }
     }
 }
 
@@ -270,7 +346,7 @@ int main() {
         render(estado, modoSeleccionado);
         update(estado, modoSeleccionado);
         input(estado, modoSeleccionado);
-        Sleep(50); // Aumentamos el tiempo de sleep para reducir el parpadeo
+        Sleep(5); // Mantener el Sleep original
     }
 
     return 0;
