@@ -265,6 +265,7 @@ void updateAliens(GameState& estado, const GameMode& mode) {
 }
 
 void update(GameState& estado, const GameMode& mode) {
+    // Mover balas
     for (auto& bullet : estado.bullets) {
         if (bullet.active) {
             bullet.y--;
@@ -272,6 +273,32 @@ void update(GameState& estado, const GameMode& mode) {
         }
     }
 
+    // Detección de colisiones entre balas y alienígenas
+    for (auto& bullet : estado.bullets) {
+        if (bullet.active) {
+            for (auto& alien : estado.aliens) {
+                if (alien.active) {
+                    // Verificar colisión
+                    if (bullet.x >= alien.x && bullet.x < alien.x + mode.alienSprite.length()
+                        && bullet.y == alien.y) {
+                        // Colisión detectada
+                        bullet.active = false;
+                        alien.active = false;
+                        estado.puntuacion += 10;
+                        estado.aliensEnEscena--;
+
+                        // Si el alienígena era el que estaba descendiendo, actualizar el puntero
+                        if (&alien == estado.alienCurrentlyDescending) {
+                            estado.alienCurrentlyDescending = nullptr;
+                        }
+                        break; // No es necesario verificar más alienígenas para esta bala
+                    }
+                }
+            }
+        }
+    }
+
+    // Eliminar balas inactivas
     estado.bullets.erase(
         remove_if(estado.bullets.begin(), estado.bullets.end(), [](const Bullet& b) { return !b.active; }),
         estado.bullets.end()
